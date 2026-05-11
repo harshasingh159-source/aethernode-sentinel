@@ -1,56 +1,66 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
 
+// YOUR CLOUDFLARE BRIDGE URL
+const API_BASE_URL = "https://distant-initiative-planes-samba.trycloudflare.com";
+
 function App() {
   const [devices, setDevices] = useState([]);
   const [stats, setStats] = useState({ total: 0, verified: 0, unknown: 0 });
+  const [isOnline, setIsOnline] = useState(false);
 
   const fetchData = async () => {
     try {
-      // 1. Fetch Devices (Updated to handle direct list)
-      const devRes = await fetch('http://127.0.0.1:8000/devices');
+      // 1. Fetch Devices
+      const devRes = await fetch(`${API_BASE_URL}/devices`);
       const devData = await devRes.json();
-      
-      // We set devData directly because the API now returns an array []
       setDevices(Array.isArray(devData) ? devData : []);
 
       // 2. Fetch Stats
-      const statRes = await fetch('http://127.0.0.1:8000/stats');
+      const statRes = await fetch(`${API_BASE_URL}/stats`);
       const statData = await statRes.json();
       setStats(statData);
+      
+      setIsOnline(true);
     } catch (error) { 
-      console.error("Connection to AetherNode API failed:", error); 
+      console.error("Bridge Connection Offline:", error); 
+      setIsOnline(false);
     }
   };
 
   const identifyDevice = async (mac) => {
-    const name = prompt("Enter a name for this device (e.g., My iPhone, Worldlink Router):");
+    const name = prompt("Enter identity for this MAC address:");
     if (!name) return;
     try {
-      await fetch('http://127.0.0.1:8000/update_device', {
+      await fetch(`${API_BASE_URL}/update_device`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mac: mac, hostname: name }),
       });
       fetchData(); 
     } catch (error) {
-      console.error("Update failed:", error);
+      console.error("Identification failed:", error);
     }
   };
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 5000); // Auto-refresh every 5 seconds
+    const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
   }, []);
 
   return (
     <div className="App" style={{ backgroundColor: '#121212', color: '#00ff41', minHeight: '100vh', padding: '20px', fontFamily: 'monospace' }}>
-      <h1>{">"} AETHER_NODE_SENTINEL_V1.3</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h1>{">"} AETHER_NODE_SENTINEL_V1.3</h1>
+        <div style={{ color: isOnline ? '#00ff41' : '#ff4141' }}>
+          ● {isOnline ? "BRIDGE_ACTIVE" : "BRIDGE_OFFLINE"}
+        </div>
+      </div>
       
       {/* --- STATS BAR --- */}
       <div style={{ display: 'flex', gap: '20px', marginBottom: '20px', padding: '15px', border: '1px solid #333', borderRadius: '5px' }}>
-        <div>[ TOTAL_DEVICES: <span style={{color: 'white'}}>{stats.total}</span> ]</div>
+        <div>[ TOTAL: <span style={{color: 'white'}}>{stats.total}</span> ]</div>
         <div>[ VERIFIED: <span style={{color: '#00ff41'}}>{stats.verified}</span> ]</div>
         <div>[ UNKNOWN_ALERTS: <span style={{color: '#ff4141'}}>{stats.unknown}</span> ]</div>
       </div>
@@ -72,17 +82,17 @@ function App() {
           <tbody>
             {devices.length > 0 ? (
               devices.map((dev, index) => (
-                <tr key={index} style={{ borderBottom: '1px solid #333' }}>
+                <tr key={index} style={{ borderBottom: '1px solid #333', backgroundColor: dev.status === 'Unknown' ? 'rgba(255, 65, 65, 0.05)' : 'transparent' }}>
                   <td style={{ padding: '10px' }}>{dev.hostname || "UNKNOWN_HOST"}</td>
                   <td>{dev.mac}</td>
                   <td>{dev.ip || "0.0.0.0"}</td>
                   <td style={{ color: dev.status === 'Unknown' ? '#ff4141' : '#00ff41', fontWeight: 'bold' }}>
-                    {dev.status || "Scanning..."}
+                    {dev.status}
                   </td>
                   <td>
                     <button 
                       onClick={() => identifyDevice(dev.mac)} 
-                      style={{ backgroundColor: '#00ff41', color: 'black', border: 'none', cursor: 'pointer', padding: '5px 10px', fontWeight: 'bold', borderRadius: '3px' }}
+                      style={{ backgroundColor: '#00ff41', color: 'black', border: 'none', cursor: 'pointer', padding: '5px 10px', fontWeight: 'bold' }}
                     >
                       IDENTIFY
                     </button>
@@ -91,8 +101,8 @@ function App() {
               ))
             ) : (
               <tr>
-                <td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>
-                  [ NO_DEVICES_DETECTED - ENSURE SNIFFER.PY IS RUNNING ]
+                <td colSpan="5" style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
+                  [ {isOnline ? "NO_DEVICES_IN_DATABASE" : "WAITING_FOR_BRIDGE..."} ]
                 </td>
               </tr>
             )}
