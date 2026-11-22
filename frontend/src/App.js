@@ -1,114 +1,185 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import './App.css';
 
-// YOUR CLOUDFLARE BRIDGE URL
-const API_BASE_URL = "https://distant-initiative-planes-samba.trycloudflare.com";
+// Set REACT_APP_API_URL in frontend/.env (e.g. a Cloudflare tunnel URL) to point at a remote API.
+const API_BASE_URL = (process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
+const POLL_MS = 5000;
+
+function timeAgo(ts) {
+  if (!ts) return '—';
+  const secs = Math.max(0, (Date.now() - new Date(ts.replace(' ', 'T')).getTime()) / 1000);
+  if (secs < 60) return `${Math.floor(secs)}s ago`;
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return `${Math.floor(secs / 86400)}d ago`;
+}
+
+async function api(path, options) {
+  const res = await fetch(`${API_BASE_URL}${path}`, options);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+function DeviceRow({ dev, onSave, onRevoke, onDelete }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(dev.hostname || '');
+  const unknown = dev.status !== 'Verified';
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (name.trim()) onSave(dev.mac, name.trim()).then(() => setEditing(false));
+  };
+
+  return (
+    <tr className={unknown ? 'intruder-row' : ''}>
+      <td>
+        {editing ? (
+          <form onSubmit={submit} className="inline-form">
+            <input autoFocus value={name} maxLength={64} onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Escape' && setEditing(false)} placeholder="device name" />
+            <button type="submit" className="btn">SAVE</button>
+          </form>
+        ) : (
+          <span className={dev.hostname ? '' : 'muted'}>{dev.hostname || 'UNKNOWN_HOST'}</span>
+        )}
+      </td>
+      <td className="mono">{dev.mac}</td>
+      <td>{dev.vendor || <span className="muted">—</span>}</td>
+      <td>{dev.ip || '0.0.0.0'}</td>
+      <td title={dev.last_seen}>
+        <span className={`dot ${dev.online ? 'on' : 'off'}`} />
+        {timeAgo(dev.last_seen)}
+      </td>
+      <td className={unknown ? 'status-bad' : 'status-ok'}>{dev.status}</td>
+      <td className="actions">
+        <button className="btn" onClick={() => setEditing(!editing)}>
+          {unknown ? 'IDENTIFY' : 'RENAME'}
+        </button>
+        {!unknown && <button className="btn ghost" onClick={() => onRevoke(dev.mac)}>REVOKE</button>}
+        <button className="btn danger" onClick={() => onDelete(dev.mac)}>✕</button>
+      </td>
+    </tr>
+  );
+}
 
 function App() {
   const [devices, setDevices] = useState([]);
-  const [stats, setStats] = useState({ total: 0, verified: 0, unknown: 0 });
+  const [stats, setStats] = useState({ total: 0, verified: 0, unknown: 0, online: 0 });
   const [isOnline, setIsOnline] = useState(false);
+  const [filter, setFilter] = useState('');
+  const [view, setView] = useState('all');
+  const [error, setError] = useState('');
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
-      // 1. Fetch Devices
-      const devRes = await fetch(`${API_BASE_URL}/devices`);
-      const devData = await devRes.json();
+      const [devData, statData] = await Promise.all([api('/devices'), api('/stats')]);
       setDevices(Array.isArray(devData) ? devData : []);
-
-      // 2. Fetch Stats
-      const statRes = await fetch(`${API_BASE_URL}/stats`);
-      const statData = await statRes.json();
       setStats(statData);
-      
       setIsOnline(true);
-    } catch (error) { 
-      console.error("Bridge Connection Offline:", error); 
+    } catch (err) {
+      console.error('Bridge Connection Offline:', err);
       setIsOnline(false);
     }
-  };
+  }, []);
 
-  const identifyDevice = async (mac) => {
-    const name = prompt("Enter identity for this MAC address:");
-    if (!name) return;
+  const act = (fn) => async (...args) => {
     try {
-      await fetch(`${API_BASE_URL}/update_device`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mac: mac, hostname: name }),
-      });
-      fetchData(); 
-    } catch (error) {
-      console.error("Identification failed:", error);
+      setError('');
+      await fn(...args);
+      await fetchData();
+    } catch (err) {
+      setError(`Action failed: ${err.message}`);
     }
   };
+
+  const saveName = act((mac, hostname) => api('/update_device', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mac, hostname }),
+  }));
+  const revoke = act((mac) => api(`/devices/${encodeURIComponent(mac)}/revoke`, { method: 'POST' }));
+  const remove = act((mac) => window.confirm(`Remove ${mac} from the database?`)
+    && api(`/devices/${encodeURIComponent(mac)}`, { method: 'DELETE' }));
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 5000);
+    const interval = setInterval(fetchData, POLL_MS);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchData]);
+
+  useEffect(() => {
+    document.title = stats.unknown > 0 ? `(${stats.unknown}) ⚠ AetherNode` : 'AetherNode Sentinel';
+  }, [stats.unknown]);
+
+  const visible = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    return devices.filter((d) => {
+      if (view === 'unknown' && d.status === 'Verified') return false;
+      if (view === 'online' && !d.online) return false;
+      if (!q) return true;
+      return [d.hostname, d.mac, d.ip, d.vendor].some((v) => v && v.toLowerCase().includes(q));
+    });
+  }, [devices, filter, view]);
 
   return (
-    <div className="App" style={{ backgroundColor: '#121212', color: '#00ff41', minHeight: '100vh', padding: '20px', fontFamily: 'monospace' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1>{">"} AETHER_NODE_SENTINEL_V1.3</h1>
-        <div style={{ color: isOnline ? '#00ff41' : '#ff4141' }}>
-          ● {isOnline ? "BRIDGE_ACTIVE" : "BRIDGE_OFFLINE"}
+    <div className="App">
+      <header className="header">
+        <h1>{'>'} AETHER_NODE_SENTINEL_V1.4</h1>
+        <div className={isOnline ? 'status-ok' : 'status-bad'}>
+          ● {isOnline ? 'BRIDGE_ACTIVE' : 'BRIDGE_OFFLINE'}
+        </div>
+      </header>
+
+      <div className="stats">
+        <div>[ TOTAL: <b className="white">{stats.total}</b> ]</div>
+        <div>[ ONLINE: <b className="white">{stats.online}</b> ]</div>
+        <div>[ VERIFIED: <b className="status-ok">{stats.verified}</b> ]</div>
+        <div className={stats.unknown > 0 ? 'alert' : ''}>
+          [ UNKNOWN_ALERTS: <b className="status-bad">{stats.unknown}</b> ]
         </div>
       </div>
-      
-      {/* --- STATS BAR --- */}
-      <div style={{ display: 'flex', gap: '20px', marginBottom: '20px', padding: '15px', border: '1px solid #333', borderRadius: '5px' }}>
-        <div>[ TOTAL: <span style={{color: 'white'}}>{stats.total}</span> ]</div>
-        <div>[ VERIFIED: <span style={{color: '#00ff41'}}>{stats.verified}</span> ]</div>
-        <div>[ UNKNOWN_ALERTS: <span style={{color: '#ff4141'}}>{stats.unknown}</span> ]</div>
-      </div>
 
-      <hr style={{ borderColor: '#00ff41' }} />
-      
-      <div style={{ marginTop: '20px' }}>
-        <h2>[ LIVE_NETWORK_MAP ]</h2>
-        <table border="1" style={{ width: '100%', borderColor: '#00ff41', borderCollapse: 'collapse', textAlign: 'left' }}>
-          <thead>
-            <tr style={{ backgroundColor: '#1a1a1a' }}>
-              <th style={{ padding: '10px' }}>IDENTITY</th>
-              <th>MAC ADDRESS</th>
-              <th>IP ADDRESS</th>
-              <th>STATUS</th>
-              <th>ACTION</th>
-            </tr>
-          </thead>
-          <tbody>
-            {devices.length > 0 ? (
-              devices.map((dev, index) => (
-                <tr key={index} style={{ borderBottom: '1px solid #333', backgroundColor: dev.status === 'Unknown' ? 'rgba(255, 65, 65, 0.05)' : 'transparent' }}>
-                  <td style={{ padding: '10px' }}>{dev.hostname || "UNKNOWN_HOST"}</td>
-                  <td>{dev.mac}</td>
-                  <td>{dev.ip || "0.0.0.0"}</td>
-                  <td style={{ color: dev.status === 'Unknown' ? '#ff4141' : '#00ff41', fontWeight: 'bold' }}>
-                    {dev.status}
-                  </td>
-                  <td>
-                    <button 
-                      onClick={() => identifyDevice(dev.mac)} 
-                      style={{ backgroundColor: '#00ff41', color: 'black', border: 'none', cursor: 'pointer', padding: '5px 10px', fontWeight: 'bold' }}
-                    >
-                      IDENTIFY
-                    </button>
+      {error && <div className="error">{error}</div>}
+
+      <section>
+        <div className="toolbar">
+          <h2>[ LIVE_NETWORK_MAP ]</h2>
+          <div className="controls">
+            {['all', 'online', 'unknown'].map((v) => (
+              <button key={v} className={`btn ${view === v ? '' : 'ghost'}`} onClick={() => setView(v)}>
+                {v.toUpperCase()}
+              </button>
+            ))}
+            <input className="search" placeholder="search name / mac / ip / vendor"
+              value={filter} onChange={(e) => setFilter(e.target.value)} />
+          </div>
+        </div>
+
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>IDENTITY</th><th>MAC ADDRESS</th><th>VENDOR</th><th>IP ADDRESS</th>
+                <th>LAST SEEN</th><th>STATUS</th><th>ACTION</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.length > 0 ? (
+                visible.map((dev) => (
+                  <DeviceRow key={dev.mac} dev={dev} onSave={saveName} onRevoke={revoke} onDelete={remove} />
+                ))
+              ) : (
+                <tr>
+                  <td colSpan="7" className="empty">
+                    [ {!isOnline ? `WAITING_FOR_BRIDGE @ ${API_BASE_URL}`
+                      : devices.length ? 'NO_MATCHES' : 'NO_DEVICES_IN_DATABASE — START sniffer.py'} ]
                   </td>
                 </tr>
-              ))
-            ) : (
-              <tr>
-                <td colSpan="5" style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
-                  [ {isOnline ? "NO_DEVICES_IN_DATABASE" : "WAITING_FOR_BRIDGE..."} ]
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }

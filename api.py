@@ -1,75 +1,104 @@
-from fastapi import FastAPI
-import sqlite3
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+"""AetherNode REST API — serves the device database to the React dashboard."""
+import os
+from datetime import datetime, timedelta
+
 import uvicorn
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
-app = FastAPI()
+import database
 
-# 1. MIDDLEWARE SETUP (Crucial for React to talk to Python)
+# A device counts as "online" if the sniffer saw it within this many minutes.
+ONLINE_WINDOW_MIN = int(os.environ.get("AETHERNODE_ONLINE_MINUTES", "10"))
+
+app = FastAPI(title="AetherNode Sentinel API", version="1.4")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=os.environ.get("AETHERNODE_CORS", "*").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 2. DATA MODELS
+
+@app.on_event("startup")
+def startup():
+    database.init_db()
+
+
 class DeviceUpdate(BaseModel):
     mac: str
-    hostname: str
+    hostname: str = Field(min_length=1, max_length=64)
 
-# 3. DATABASE HELPER
-def get_devices():
-    try:
-        conn = sqlite3.connect('aethernode.db')
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
-        c.execute("SELECT * FROM devices ORDER BY last_seen DESC")
-        rows = c.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
-    except sqlite3.OperationalError:
-        # Returns an empty list if the database/table doesn't exist yet
-        return []
 
-# 4. ROUTES
+def _cutoff():
+    return (datetime.now() - timedelta(minutes=ONLINE_WINDOW_MIN)).strftime("%Y-%m-%d %H:%M:%S")
+
+
 @app.get("/")
 def home():
-    return {"status": "online", "system": "AetherNode Sentinel"}
+    return {"status": "online", "system": "AetherNode Sentinel", "version": app.version}
+
 
 @app.get("/devices")
 def read_devices():
-    # Returning the list directly makes it easier for React to .map()
-    return get_devices()
+    cutoff = _cutoff()
+    with database.connect() as conn:
+        rows = conn.execute("SELECT * FROM devices ORDER BY last_seen DESC").fetchall()
+    return [{**dict(r), "online": bool(r["last_seen"] and r["last_seen"] >= cutoff)} for r in rows]
+
 
 @app.get("/stats")
 def get_stats():
-    try:
-        conn = sqlite3.connect('aethernode.db')
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM devices")
-        total = c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM devices WHERE status = 'Verified'")
-        verified = c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM devices WHERE status = 'Unknown'")
-        unknown = c.fetchone()[0]
-        conn.close()
-        return {"total": total, "verified": verified, "unknown": unknown}
-    except:
-        return {"total": 0, "verified": 0, "unknown": 0}
+    with database.connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS total, "
+            "COALESCE(SUM(status = 'Verified'), 0) AS verified, "
+            "COALESCE(SUM(status != 'Verified'), 0) AS unknown, "
+            "COALESCE(SUM(last_seen >= ?), 0) AS online FROM devices",
+            (_cutoff(),),
+        ).fetchone()
+    return dict(row)
+
+
+def _require(conn, mac):
+    if not conn.execute("SELECT 1 FROM devices WHERE mac = ?", (mac,)).fetchone():
+        raise HTTPException(status_code=404, detail=f"Device {mac} not found")
+
 
 @app.post("/update_device")
 def update_device(data: DeviceUpdate):
-    conn = sqlite3.connect('aethernode.db')
-    c = conn.cursor()
-    c.execute("UPDATE devices SET hostname = ?, status = 'Verified' WHERE mac = ?", 
-              (data.hostname, data.mac))
-    conn.commit()
-    conn.close()
-    return {"message": f"Device {data.mac} identified as {data.hostname}"}
+    mac, name = data.mac.lower(), data.hostname.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Hostname cannot be blank")
+    with database.connect() as conn:
+        _require(conn, mac)
+        conn.execute("UPDATE devices SET hostname = ?, status = 'Verified' WHERE mac = ?", (name, mac))
+    return {"message": f"Device {mac} identified as {name}"}
 
-# 5. THE ENGINE (This keeps the code running!)
+
+@app.post("/devices/{mac}/revoke")
+def revoke_device(mac: str):
+    """Mark a device as Unknown again (e.g. you no longer trust it)."""
+    mac = mac.lower()
+    with database.connect() as conn:
+        _require(conn, mac)
+        conn.execute("UPDATE devices SET status = 'Unknown' WHERE mac = ?", (mac,))
+    return {"message": f"Device {mac} marked Unknown"}
+
+
+@app.delete("/devices/{mac}")
+def delete_device(mac: str):
+    mac = mac.lower()
+    with database.connect() as conn:
+        _require(conn, mac)
+        conn.execute("DELETE FROM devices WHERE mac = ?", (mac,))
+    return {"message": f"Device {mac} removed"}
+
+
 if __name__ == "__main__":
-    print("Starting AetherNode API...")
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    host = os.environ.get("AETHERNODE_HOST", "127.0.0.1")
+    port = int(os.environ.get("AETHERNODE_PORT", "8000"))
+    print(f"Starting AetherNode API on http://{host}:{port}  (docs at /docs)")
+    uvicorn.run(app, host=host, port=port)

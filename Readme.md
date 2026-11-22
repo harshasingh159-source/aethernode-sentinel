@@ -1,4 +1,4 @@
-# 📡 AETHER_NODE_SENTINEL V1.3
+# 📡 AETHER_NODE_SENTINEL V1.4
 
 > **Status:** [ SYSTEM_OPERATIONAL ]  
 > **Network:** [ WORLDLINK_SECURED ]  
@@ -18,27 +18,62 @@ AetherNode works in three synchronized layers:
 ---
 
 ## 🚀 FEATURES
-* **Zero-Latency Detection:** Sees new devices the moment they join.
-* **Hardware Fingerprinting:** Automatically identifies manufacturers (e.g., Nokia, Dell, Apple).
-* **Intruder Alerts:** Visual red-pulse animation for unverified MAC addresses.
-* **Network Stats:** Live counters for Active vs. Known devices.
-* **Kali Linux Ready:** Optimized for execution in Linux environments for advanced sniffing.
+* **Passive + active detection:** listens to all ARP traffic, and with `--scan` sweeps the subnet so quiet devices show up too.
+* **Hardware fingerprinting:** vendor lookup from the MAC (e.g. Nokia, Dell, Apple); flags randomized/private MACs.
+* **Intruder alerts:** red-pulse rows for unverified devices, alert count in the browser tab title.
+* **Live status:** online indicator + "last seen" per device; counters for Total / Online / Verified / Unknown.
+* **Device management:** identify/rename inline, revoke trust, or remove a device.
+* **Search & filters:** filter by name, MAC, IP, vendor; ALL / ONLINE / UNKNOWN views.
 
 ---
 
 ## 💻 TECH STACK
 * **Language:** Python 3.10+
-* **Library:** Scapy (Packet Manipulation)
-* **Backend:** FastAPI
-* **Frontend:** React.js (Custom Terminal UI)
-* **Database:** SQLite3
+* **Sensor:** Scapy
+* **Backend:** FastAPI + SQLite3
+* **Frontend:** React (Create React App)
 
 ---
 
 ## 🚦 GETTING STARTED
 
-### 1. The Backend
+### 1. Install
 ```bash
-cd backend
 pip install -r requirements.txt
-python sniffer.py
+cd frontend && npm install
+```
+On **Windows**, sniffing also requires [Npcap](https://npcap.com) (tick "WinPcap API-compatible mode").
+
+### 2. Run (three terminals, from the repo root)
+```bash
+# Sensor — needs Administrator / sudo
+python sniffer.py --scan
+
+# API — http://127.0.0.1:8000  (interactive docs at /docs)
+python api.py
+
+# Dashboard — http://localhost:3000
+cd frontend && npm start
+```
+The database (`aethernode.db`) is created/migrated automatically next to the scripts.
+
+### Configuration
+| Variable | Where | Default |
+|---|---|---|
+| `REACT_APP_API_URL` | `frontend/.env.local` | `http://127.0.0.1:8000` (set to your tunnel URL to view remotely) |
+| `AETHERNODE_HOST` / `AETHERNODE_PORT` | API | `127.0.0.1` / `8000` |
+| `AETHERNODE_ONLINE_MINUTES` | API | `10` — how recently a device must be seen to count as online |
+| `AETHERNODE_DB` | sensor + API | `./aethernode.db` |
+
+Sniffer options: `--iface NAME`, `--scan`, `--interval SECONDS`.
+
+### API
+| Method | Path | |
+|---|---|---|
+| GET | `/devices` | all devices (with `online` flag) |
+| GET | `/stats` | totals |
+| POST | `/update_device` | `{mac, hostname}` → names + verifies a device |
+| POST | `/devices/{mac}/revoke` | mark a device Unknown again |
+| DELETE | `/devices/{mac}` | forget a device |
+
+> ⚠️ Only monitor networks you own or are authorized to monitor.
