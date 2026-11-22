@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AetherNode</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='5' fill='%2334d399'/%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%2334d399' stroke-width='2' opacity='.5'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="radar" aria-hidden="true"></span>
+      <div>
+        <h1>AetherNode</h1>
+        <p id="scan-status" class="sub">Connecting…</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button id="notify-btn" class="btn ghost" hidden>Enable alerts</button>
+      <button id="scan-btn" class="btn">Scan now</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <section class="tiles">
+    <div class="tile"><span id="c-online">–</span><label>Online now</label></div>
+    <div class="tile warn"><span id="c-untrusted">–</span><label>Need review</label></div>
+    <div class="tile ok"><span id="c-trusted">–</span><label>Trusted</label></div>
+    <div class="tile"><span id="c-total">–</span><label>Ever seen</label></div>
+  </section>
+
+  <main class="layout">
+    <section class="panel">
+      <div class="panel-head">
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-view="review">Need review</button>
+          <button class="tab" data-view="online">Online</button>
+          <button class="tab" data-view="all">All</button>
+        </div>
+        <input id="search" type="search" placeholder="Search name, IP, MAC, vendor">
+      </div>
+      <ul id="devices" class="devices"></ul>
+      <p id="empty" class="empty" hidden></p>
+    </section>
+
+    <aside class="panel">
+      <div class="panel-head"><h2>Activity</h2></div>
+      <ol id="events" class="events"></ol>
+    </aside>
+  </main>
+
+  <template id="device-tpl">
+    <li class="device">
+      <span class="dot"></span>
+      <div class="info">
+        <div class="title">
+          <span class="name"></span>
+          <span class="badges"></span>
+        </div>
+        <div class="meta"></div>
+      </div>
+      <div class="seen"></div>
+      <div class="actions">
+        <button class="btn small trust"></button>
+        <button class="btn small ghost rename">Rename</button>
+        <button class="btn small ghost danger forget" title="Forget this device">Forget</button>
+      </div>
+    </li>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
