@@ -105,7 +105,7 @@ aethernode/
   store.py      SQLite inventory and activity log
   server.py     FastAPI routes, serves static/
   static/       dashboard (plain HTML/CSS/JS)
-tests/          python -m unittest
+tests/          pip install -r requirements-dev.txt; python -m unittest
 ```
 
 > Only monitor networks you own or are allowed to monitor.
