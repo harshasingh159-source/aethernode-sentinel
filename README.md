@@ -14,6 +14,8 @@ One Python process does everything (scanning, storage and the web dashboard), wi
 2. Double-click it. The dashboard opens in your browser, and AetherNode keeps running in the background with an icon in the system tray, by the clock (look under the **^** arrow if you don't see it).
 3. Windows may show *"Windows protected your PC"*, because the app isn't code-signed yet (see the [code signing policy](CODE_SIGNING_POLICY.md)). Click **More info → Run anyway**. Only do this for a file downloaded from the release page above (you can check it against the SHA-256 listed there).
 
+**Code signing:** AetherNode uses [SignPath Foundation](https://signpath.org) for free code signing of open-source software. The application is in progress, so current releases are still unsigned; see the [code signing policy](CODE_SIGNING_POLICY.md).
+
 There's no installer: AetherNode is a single file, and it doesn't change Windows settings, install services or add itself to startup.
 
 **Tray icon:** click it to open the dashboard. Right-click it for *Open dashboard*, *Open data folder* and *Quit AetherNode*. It turns amber while an untrusted device is online, and Windows notifies you when a new device joins your network.
