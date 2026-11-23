@@ -23,6 +23,15 @@ The dashboard opens at <http://127.0.0.1:8000>. Within ~10 seconds the first sca
 - **Enable alerts**: get a desktop notification whenever a new device joins (while the dashboard tab is open).
 - The browser tab title shows how many untrusted devices are online right now.
 
+## Router device list
+
+The **Router** tab signs in to your router's admin page and shows its list of connected devices. This is the best way to find out whose device is whose, because routers record the name each phone or laptop gives itself (e.g. "Galaxy-S23", "Sams-iPhone"). Those names are copied onto your devices in AetherNode automatically.
+
+- Supported: **Nokia** routers and Wi-Fi Beacons (the "web_whw" admin page).
+- Enter the router's admin username and password; they're usually printed on the sticker under the router. They are checked right away and only kept if the router accepts them.
+- Tick **Remember** to keep the login across restarts. It is stored unencrypted in `aethernode.db`, so leave it unticked on a shared PC.
+- AetherNode signs in, reads the list and signs out again every 2 minutes (`--router-interval`), so it never blocks you from using the router's own admin page. If the router rejects the password, polling stops so it can't trigger the router's lockout.
+
 ## How detection works
 
 | Engine | Needs | What it does |
@@ -39,7 +48,8 @@ A device is marked offline after it's been missing for 3 sweeps (min 3 minutes).
 ```
 python -m aethernode [--port 8000] [--host 127.0.0.1] [--interval 60]
                      [--subnet 192.168.1.0/24] [--db aethernode.db]
-                     [--no-live] [--no-scan] [--open]
+                     [--no-live] [--no-scan] [--no-router]
+                     [--router-interval 120] [--open]
 ```
 
 Use `--host 0.0.0.0` to view the dashboard from your phone on the same network. There's no login, so only do that on a network you trust.
@@ -54,6 +64,10 @@ Use `--host 0.0.0.0` to view the dashboard from your phone on the same network. 
 | DELETE | `/api/devices/{mac}` | forget a device |
 | GET | `/api/events?limit=50` | activity log |
 | POST | `/api/scan` | sweep now |
+| GET | `/api/router` | router connection state + its device list |
+| PUT | `/api/router` | `{"url", "username", "password", "remember"}`: connect |
+| DELETE | `/api/router` | disconnect and forget the login |
+| POST | `/api/router/refresh` | re-read the router now |
 
 ## Project layout
 
@@ -61,6 +75,7 @@ Use `--host 0.0.0.0` to view the dashboard from your phone on the same network. 
 aethernode/
   __main__.py   CLI entry point
   scanner.py    sweep + live discovery engines
+  router.py     router admin-page client (device list)
   store.py      SQLite inventory and activity log
   server.py     FastAPI routes, serves static/
   static/       dashboard (plain HTML/CSS/JS)

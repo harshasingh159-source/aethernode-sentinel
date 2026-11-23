@@ -136,3 +136,22 @@ input:focus { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transpare
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; }
 }
+
+/* router tab */
+#router-view { padding: 0; }
+.router-bar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.router-bar .sub { margin: 0; }
+.router-actions { display: flex; gap: 6px; }
+.router-error { margin: 12px 14px; color: var(--danger); font-size: 13.5px; }
+.router-form { display: grid; gap: 12px; padding: 18px 16px; max-width: 520px; }
+.router-form h3 { margin: 0; font-size: 16px; }
+.router-form .sub { margin: 0; line-height: 1.5; }
+.router-form label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+.router-form label.check { display: flex; align-items: center; gap: 8px; }
+.router-form input:not([type=checkbox]) {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 14px;
+}
+.router-form .btn { justify-self: start; }
+.badge.ok { border-color: var(--accent); color: var(--accent); }
+.badge.warn { border-color: var(--warn); color: var(--warn); }

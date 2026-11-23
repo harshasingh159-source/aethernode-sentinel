@@ -38,11 +38,37 @@
           <button class="tab active" data-view="review">Need review</button>
           <button class="tab" data-view="online">Online</button>
           <button class="tab" data-view="all">All</button>
+          <button class="tab" data-view="router">Router</button>
         </div>
         <input id="search" type="search" placeholder="Search name, IP, MAC, vendor">
       </div>
       <ul id="devices" class="devices"></ul>
       <p id="empty" class="empty" hidden></p>
+
+      <div id="router-view" hidden>
+        <div id="router-connected" hidden>
+          <div class="router-bar">
+            <p id="router-summary" class="sub"></p>
+            <div class="router-actions">
+              <button id="router-refresh" class="btn small ghost">Refresh</button>
+              <button id="router-disconnect" class="btn small ghost danger">Disconnect</button>
+            </div>
+          </div>
+          <p id="router-error" class="router-error" hidden></p>
+          <ul id="router-devices" class="devices"></ul>
+        </div>
+
+        <form id="router-form" class="router-form" hidden autocomplete="on">
+          <h3>Connect your router</h3>
+          <p class="sub">AetherNode signs in to your router's admin page to read its <b>connected devices</b> list, which includes the names phones give themselves (like "Galaxy-S23"). Those names then show up on your devices here. Supported: Nokia routers / Wi-Fi Beacons.</p>
+          <label>Router address <input name="url" required placeholder="https://192.168.1.254"></label>
+          <label>Admin username <input name="username" required autocomplete="username" placeholder="usually printed on the router's sticker"></label>
+          <label>Admin password <input name="password" type="password" required autocomplete="current-password"></label>
+          <label class="check"><input name="remember" type="checkbox"> Remember on this PC (saved in aethernode.db, unencrypted)</label>
+          <p id="router-form-error" class="router-error" hidden></p>
+          <button class="btn" type="submit">Connect</button>
+        </form>
+      </div>
     </section>
 
     <aside class="panel">

@@ -4,7 +4,7 @@ const POLL_MS = 4000;
 const $ = (sel) => document.querySelector(sel);
 
 const state = {
-  devices: [], events: [], status: null,
+  devices: [], events: [], status: null, router: null,
   view: "review", query: "", editing: null,
   lastEventId: null, fresh: new Set(),
 };
@@ -22,9 +22,10 @@ async function api(path, opts = {}) {
 
 async function refresh() {
   try {
-    const [status, devices, events] = await Promise.all([api("/status"), api("/devices"), api("/events?limit=60")]);
+    const [status, devices, events, router] = await Promise.all([
+      api("/status"), api("/devices"), api("/events?limit=60"), api("/router").catch(() => null)]);
     handleNewEvents(events);
-    Object.assign(state, { status, devices, events });
+    Object.assign(state, { status, devices, events, router });
     banner(status.scanner?.error ? `Scanner problem: ${status.scanner.error}` : "");
     render();
   } catch (e) {
@@ -89,6 +90,7 @@ const VIEWS = {
   review: (d) => !d.trusted,
   online: (d) => d.online,
   all: () => true,
+  router: () => false,
 };
 
 // ---------------------------------------------------------------- render
@@ -105,12 +107,20 @@ function render() {
 
   renderScanStatus(status.scanner);
   for (const tab of document.querySelectorAll(".tab")) {
-    const n = state.devices.filter(VIEWS[tab.dataset.view]).length;
-    tab.replaceChildren(tab.dataset.view === "review" ? "Need review" : tab.dataset.view[0].toUpperCase() + tab.dataset.view.slice(1),
+    const v = tab.dataset.view;
+    const n = v === "router" ? (state.router?.configured ? state.router.devices.filter((d) => d.active).length : "")
+      : state.devices.filter(VIEWS[v]).length;
+    tab.hidden = v === "router" && !state.router;
+    tab.replaceChildren(v === "review" ? "Need review" : v[0].toUpperCase() + v.slice(1),
       el("span", { className: "n", textContent: n }));
     tab.classList.toggle("active", tab.dataset.view === state.view);
   }
-  if (!state.editing) renderDevices();
+  const routerView = state.view === "router";
+  $("#router-view").hidden = !routerView;
+  $("#devices").hidden = routerView;
+  $("#search").hidden = routerView;
+  if (routerView) { $("#empty").hidden = true; renderRouter(); }
+  else if (!state.editing) renderDevices();
   renderEvents();
 }
 
@@ -127,6 +137,48 @@ function renderScanStatus(s) {
   parts.push(s.live === "on" ? "live alerts on" : "sweep mode");
   line.textContent = parts.join(" · ");
   line.title = s.live !== "on" ? `Live sniffing: ${s.live}` : "";
+}
+
+function renderRouter() {
+  const r = state.router;
+  if (!r) return;
+  const form = $("#router-form");
+  const needsLogin = !r.configured || r.status === "auth_failed";
+  $("#router-connected").hidden = !r.configured;
+  if (form.hidden && needsLogin && !form.url.value) form.url.value = r.url || r.suggested_url || "";
+  if (form.hidden && needsLogin && !form.username.value && r.username) form.username.value = r.username;
+  form.hidden = !needsLogin;
+  if (!r.configured) return;
+
+  const parts = [`${r.kind} router at ${r.url}`, `signed in as ${r.username}`];
+  parts.push(r.last_poll ? `updated ${ago(r.last_poll)}` : "connecting…");
+  if (!r.remembered) parts.push("not remembered after restart");
+  $("#router-summary").textContent = parts.join(" · ");
+  const err = $("#router-error");
+  err.hidden = !r.error;
+  err.textContent = r.status === "auth_failed" ? `Router rejected the login: ${r.error} Sign in again below.` : `Last refresh failed: ${r.error || ""}`;
+
+  const active = r.devices.filter((d) => d.active).length;
+  const list = r.devices.map((d) => {
+    const badges = [];
+    if (d.trusted) badges.push(el("span", { className: "badge ok", textContent: "Trusted" }));
+    else if (d.known) badges.push(el("span", { className: "badge warn", textContent: "Needs review" }));
+    else badges.push(el("span", { className: "badge", textContent: "Not seen by scanner" }));
+    if (d.connection) badges.push(el("span", { className: "badge", textContent: d.connection }));
+    const meta = [d.ip || "no IP", el("span", { className: "mono", textContent: d.mac })];
+    if (d.label && d.label !== d.name) meta.push(`you call it "${d.label}"`);
+    return el("li", { className: `device${d.known && !d.trusted ? " untrusted" : ""}` },
+      el("span", { className: `dot${d.active ? " on" : ""}`, title: d.active ? "Connected" : "Not connected" }),
+      el("div", { className: "info" },
+        el("div", { className: "title" },
+          el("span", { className: `name${d.name ? "" : " placeholder"}`, textContent: d.name || "No name reported" }),
+          el("span", { className: "badges" }, ...badges)),
+        el("div", { className: "meta" }, ...meta.flatMap((m, i) => (i ? [" · ", m] : [m])))),
+      el("div", { className: "seen", textContent: d.active ? "connected" : "not connected" }));
+  });
+  $("#router-devices").replaceChildren(...(list.length ? list
+    : [el("li", { className: "empty", textContent: r.last_poll ? "The router reported no devices." : "Reading the router's device list…" })]));
+  $("#router-summary").textContent += ` · ${active} connected / ${r.devices.length} known`;
 }
 
 function renderDevices() {
@@ -246,6 +298,30 @@ if ("Notification" in window && Notification.permission === "default") {
   notifyBtn.hidden = false;
   notifyBtn.onclick = () => Notification.requestPermission().then(() => { notifyBtn.hidden = true; });
 }
+
+const routerForm = $("#router-form");
+routerForm.onsubmit = async (e) => {
+  e.preventDefault();
+  const btn = routerForm.querySelector("button[type=submit]");
+  const errEl = $("#router-form-error");
+  btn.disabled = true; btn.textContent = "Signing in…"; errEl.hidden = true;
+  try {
+    await api("/router", { method: "PUT", body: {
+      url: routerForm.url.value.trim(), username: routerForm.username.value.trim(),
+      password: routerForm.password.value, remember: routerForm.remember.checked } });
+    routerForm.password.value = "";
+    routerForm.hidden = true;
+  } catch (err) {
+    errEl.textContent = err.message; errEl.hidden = false;
+  } finally {
+    btn.disabled = false; btn.textContent = "Connect";
+  }
+  await refresh();
+};
+$("#router-refresh").onclick = () => act(() => api("/router/refresh", { method: "POST" }));
+$("#router-disconnect").onclick = () => {
+  if (confirm("Disconnect the router? AetherNode will forget its login.")) act(() => api("/router", { method: "DELETE" }));
+};
 
 refresh();
 setInterval(refresh, POLL_MS);

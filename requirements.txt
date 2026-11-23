@@ -1,4 +1,7 @@
 fastapi>=0.110
 uvicorn>=0.29
+# router device list (Nokia routers)
+requests>=2.31
+cryptography>=42
 # optional: device vendor names + instant (live) detection
 scapy>=2.5

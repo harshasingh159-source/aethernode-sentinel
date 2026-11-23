@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import __version__
+from .router import RouterError
 
 STATIC = Path(__file__).parent / "static"
 
@@ -16,7 +17,14 @@ class DevicePatch(BaseModel):
     trusted: Optional[bool] = None
 
 
-def create_app(store, scanner=None):
+class RouterLogin(BaseModel):
+    url: str = Field(min_length=1, max_length=200)
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=128)
+    remember: bool = False
+
+
+def create_app(store, scanner=None, router=None):
     app = FastAPI(title="AetherNode", version=__version__)
 
     def norm(mac):
@@ -55,5 +63,32 @@ def create_app(store, scanner=None):
         scanner.scan_now()
         return {"ok": True}
 
-    app.mount("/", StaticFiles(directory=STATIC, html=True), name="ui")
+    def need_router():
+        if router is None:
+            raise HTTPException(503, "Router integration is disabled")
+        return router
+
+    @app.get("/api/router")
+    def router_status():
+        return need_router().public_state()
+
+    @app.put("/api/router")
+    def router_connect(body: RouterLogin):
+        link = need_router()
+        try:
+            return link.connect(body.url, body.username, body.password, body.remember)
+        except RouterError as e:
+            raise HTTPException(400, str(e))
+
+    @app.delete("/api/router")
+    def router_disconnect():
+        need_router().disconnect()
+        return {"ok": True}
+
+    @app.post("/api/router/refresh")
+    def router_refresh():
+        need_router().refresh()
+        return {"ok": True}
+
+    app.mount("/",StaticFiles(directory=STATIC, html=True), name="ui")
     return app

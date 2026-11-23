@@ -1,4 +1,5 @@
 """Persistent device inventory + activity log, backed by SQLite."""
+import json
 import sqlite3
 import threading
 import time
@@ -24,6 +25,10 @@ CREATE TABLE IF NOT EXISTS events (
     detail TEXT
 );
 CREATE INDEX IF NOT EXISTS events_by_time ON events (ts DESC);
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -107,6 +112,26 @@ class Store:
             if cur.rowcount:
                 self._log(time.time(), "forgotten", mac, None)
             return cur.rowcount > 0
+
+    def name_from_router(self, mac, name):
+        """Router-reported names beat reverse DNS; only applied to devices we already know."""
+        with self._lock, self._db:
+            self._db.execute("UPDATE devices SET hostname = ? WHERE mac = ?", (name, mac))
+
+    # ---- settings ----
+
+    def get_setting(self, key, default=None):
+        with self._lock:
+            row = self._db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return json.loads(row["value"]) if row else default
+
+    def set_setting(self, key, value):
+        with self._lock, self._db:
+            if value is None:
+                self._db.execute("DELETE FROM settings WHERE key = ?", (key,))
+            else:
+                self._db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                                 (key, json.dumps(value)))
 
     # ---- reads ----
 
