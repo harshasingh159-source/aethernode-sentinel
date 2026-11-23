@@ -4,12 +4,24 @@
 
 One Python process does everything (scanning, storage and the web dashboard), with no Node/npm and no admin rights required.
 
-## Quick start
+## Download (Windows)
+
+1. Download **`AetherNode.exe`** from the [latest release](https://github.com/harshasingh159-source/aethernode-sentinel/releases/latest).
+2. Double-click it. A small console window opens and the dashboard opens in your browser. **Keep that window open** while you use AetherNode; close it to stop.
+3. Windows may show *"Windows protected your PC"*, because the app isn't code-signed. Click **More info → Run anyway**. Only do this for a file downloaded from the release page above (you can check it against the SHA-256 listed there).
+
+Your data stays on your PC, in `%LOCALAPPDATA%\AetherNode\aethernode.db`. No account, no cloud. Optional: install [Npcap](https://npcap.com) for instant new-device alerts. Without it, devices still show up within a minute.
+
+Running it again while it's open just brings the dashboard back up.
+
+## Run from source
 
 ```bash
 pip install -r requirements.txt
 python -m aethernode --open
 ```
+
+Build the .exe yourself (Windows): `powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1`, output in `dist\AetherNode.exe`.
 
 The dashboard opens at <http://127.0.0.1:8000>. Within ~10 seconds the first scan fills it with every device on your network.
 
@@ -58,7 +70,7 @@ A device is marked offline after it's been missing for 3 sweeps (min 3 minutes).
 python -m aethernode [--port 8000] [--host 127.0.0.1] [--interval 60]
                      [--subnet 192.168.1.0/24] [--db aethernode.db]
                      [--no-live] [--no-scan] [--no-router]
-                     [--router-interval 120] [--open]
+                     [--router-interval 120] [--open | --no-open]
 ```
 
 Use `--host 0.0.0.0` to view the dashboard from your phone on the same network. There's no login, so only do that on a network you trust.
@@ -93,3 +105,7 @@ tests/          python -m unittest
 ```
 
 > Only monitor networks you own or are allowed to monitor.
+
+## License
+
+[MIT](LICENSE): free to use, modify and share.
