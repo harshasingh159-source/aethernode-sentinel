@@ -71,6 +71,7 @@ jobs:
           New-Item -ItemType Directory -Force release | Out-Null
           $exe = if (Test-Path signed\AetherNode.exe) { "signed\AetherNode.exe" } else { "dist\AetherNode.exe" }
           Copy-Item $exe release\AetherNode.exe
+          Copy-Item dist\THIRD_PARTY_NOTICES.txt release\THIRD_PARTY_NOTICES.txt
           $hash = (Get-FileHash release\AetherNode.exe -Algorithm SHA256).Hash
           "$hash  AetherNode.exe" | Out-File -Encoding ascii release\SHA256SUMS.txt
           $signed = if ($exe -like "signed*") { "yes" } else { "no" }
@@ -105,6 +106,8 @@ jobs:
           SHA-256: ``$env:SHA256``
 
           Built automatically by GitHub Actions from commit ${{ github.sha }} ([build log](https://github.com/$repo/actions/runs/${{ github.run_id }})).
+
+          [Code signing policy](https://github.com/$repo/blob/main/CODE_SIGNING_POLICY.md) · [Privacy](https://github.com/$repo#privacy) · [How to uninstall](https://github.com/$repo#uninstall) · License: MIT (the .exe also bundles third-party components, see THIRD_PARTY_NOTICES.txt)
           "@
           $notes | Out-File -Encoding utf8 notes.md
-          gh release create $tag release/AetherNode.exe release/SHA256SUMS.txt --title "AetherNode $tag" --notes-file notes.md --verify-tag
+          gh release create $tag release/AetherNode.exe release/SHA256SUMS.txt release/THIRD_PARTY_NOTICES.txt --title "AetherNode $tag" --notes-file notes.md --verify-tag

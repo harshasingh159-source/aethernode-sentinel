@@ -4,11 +4,17 @@
 
 One Python process does everything (scanning, storage and the web dashboard), with no Node/npm and no admin rights required.
 
+**What it is not:** AetherNode only lists which devices are on your own network. It does no port scanning, no vulnerability or exploit detection, and it never tries to log in to other devices. The one exception is your router's admin page, and only if you enter its password yourself.
+
+[Code signing policy](CODE_SIGNING_POLICY.md) · [Privacy](#privacy) · [Uninstall](#uninstall) · [License](#license)
+
 ## Download (Windows)
 
 1. Download **`AetherNode.exe`** from the [latest release](https://github.com/harshasingh159-source/aethernode-sentinel/releases/latest).
 2. Double-click it. The dashboard opens in your browser, and AetherNode keeps running in the background with an icon in the system tray, by the clock (look under the **^** arrow if you don't see it).
-3. Windows may show *"Windows protected your PC"*, because the app isn't code-signed. Click **More info → Run anyway**. Only do this for a file downloaded from the release page above (you can check it against the SHA-256 listed there).
+3. Windows may show *"Windows protected your PC"*, because the app isn't code-signed yet (see the [code signing policy](CODE_SIGNING_POLICY.md)). Click **More info → Run anyway**. Only do this for a file downloaded from the release page above (you can check it against the SHA-256 listed there).
+
+There's no installer: AetherNode is a single file, and it doesn't change Windows settings, install services or add itself to startup.
 
 **Tray icon:** click it to open the dashboard. Right-click it for *Open dashboard*, *Open data folder* and *Quit AetherNode*. It turns amber while an untrusted device is online, and Windows notifies you when a new device joins your network.
 
@@ -105,11 +111,39 @@ aethernode/
   store.py      SQLite inventory and activity log
   server.py     FastAPI routes, serves static/
   static/       dashboard (plain HTML/CSS/JS)
+  tray.py       system-tray front end (Windows .exe)
+packaging/      Windows .exe build: build_windows.ps1, icon, version info, license notices
+.github/        GitHub Actions: tests on every push, release builds from v* tags
 tests/          pip install -r requirements-dev.txt; python -m unittest
 ```
 
 > Only monitor networks you own or are allowed to monitor.
 
+## Privacy
+
+This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. In detail:
+
+- **No telemetry, accounts, ads or update checks.** AetherNode never contacts the internet by itself.
+- **Your data stays on your PC,** in `%LOCALAPPDATA%\AetherNode\` (the .exe) or `aethernode.db` in the folder you run it from (source). It holds the device list, the names you give devices, the activity log, and the router login only if you tick *Remember* (stored unencrypted).
+- **The dashboard is only reachable from your own PC** (`127.0.0.1`) unless you start it with `--host`.
+- **Network traffic it creates, all on your local network:**
+  - pings to the addresses of your local network, once a minute
+  - reading Windows' own list of nearby devices (the ARP table)
+  - reverse-DNS lookups of new devices' local IP addresses. These go to your network's DNS server, which is usually your router.
+  - if Npcap is installed, listening for local ARP traffic. Only device addresses are read; nothing is stored beyond the device list.
+- **The router integration** contacts only the router address you enter, and only after you sign in. It signs in about every 2 minutes, reads the device list and signs out. It removes devices from the router only when you select them and confirm.
+- **Links in the dashboard footer** (source code, license, privacy) open GitHub in your browser only when you click them.
+
+## Uninstall
+
+1. Right-click the tray icon and choose **Quit AetherNode**.
+2. Delete `AetherNode.exe`.
+3. Delete the folder `%LOCALAPPDATA%\AetherNode` (paste that into Explorer's address bar). It holds your device list and log.
+
+That's everything: AetherNode makes no other changes to your PC. If you installed Npcap for it, you can remove that separately under *Settings → Apps*.
+
 ## License
 
-[MIT](LICENSE): free to use, modify and share.
+AetherNode's source code is [MIT](LICENSE) licensed: free to use, modify and share.
+
+The Windows .exe also bundles third-party open-source components, each under its own license. They're listed with their full license texts in `THIRD_PARTY_NOTICES.txt`, which is attached to every release and linked from the dashboard footer. Most are MIT, BSD or Apache licensed. **Scapy is GPL-2.0-only** and **pystray is LGPL-3.0**, so if you redistribute the .exe, follow those licenses too. The complete source is in this repository.

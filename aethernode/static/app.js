@@ -381,5 +381,9 @@ $("#router-disconnect").onclick = async () => {
   }
 };
 
+// footer: version, and the bundled license notices (present in the Windows .exe build)
+api("/status").then((st) => { $("#foot-version").textContent = `AetherNode ${st.version}`; }).catch(() => {});
+fetch("THIRD_PARTY_NOTICES.txt", { method: "HEAD" }).then((r) => { $("#foot-notices").hidden = !r.ok; }).catch(() => {});
+
 refresh();
 setInterval(refresh, POLL_MS);

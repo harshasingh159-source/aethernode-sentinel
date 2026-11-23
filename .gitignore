@@ -9,3 +9,5 @@ build/
 dist/
 *.spec
 packaging/*.ico
+packaging/version_info.txt
+dist-*/
