@@ -58,6 +58,8 @@ def main():
     p.add_argument("--open", action="store_true", default=FROZEN,
                    help="open the dashboard in your browser (default for the .exe)")
     p.add_argument("--no-open", dest="open", action="store_false", help="don't open the browser")
+    p.add_argument("--tray", action=argparse.BooleanOptionalAction, default=FROZEN,
+                   help="run in the background with a system-tray icon (default for the .exe)")
     p.add_argument("--version", action="version", version=f"AetherNode {__version__}")
     args = p.parse_args()
 
@@ -72,6 +74,36 @@ def main():
     while not port_free(args.host, port) and port < args.port + 20:
         port += 1
 
+    data_dir = Path(args.db).resolve().parent
+    if args.tray:
+        # No console in the windowed .exe: send all output to a log file next to the database.
+        log_path = data_dir / "aethernode.log"
+        if log_path.exists() and log_path.stat().st_size > 2_000_000:
+            log_path.replace(log_path.with_suffix(".log.old"))
+        stream = open(log_path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115 - lives for the process
+        sys.stdout = sys.stdout or stream
+        sys.stderr = sys.stderr or stream
+        logging.basicConfig(level=logging.INFO, stream=stream,
+                            format="%(asctime)s  %(levelname)-7s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    else:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-7s %(message)s", datefmt="%H:%M:%S")
+
+    try:
+        run(args, port, local, data_dir)
+    except Exception as e:
+        logging.exception("AetherNode failed to start")
+        if args.tray:
+            show_error(f"AetherNode couldn't start:\n\n{e}\n\nDetails are in {data_dir / 'aethernode.log'}")
+        raise
+
+
+def show_error(text):
+    if os.name == "nt":
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, text, "AetherNode", 0x10)
+
+
+def run(args, port, local, data_dir):
     # heavy imports only once we know we're starting
     import uvicorn
 
@@ -80,7 +112,6 @@ def main():
     from .server import create_app
     from .store import Store
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-7s %(message)s", datefmt="%H:%M:%S")
     store = Store(args.db)
     scanner = None
     if not args.no_scan:
@@ -90,12 +121,40 @@ def main():
     router = None if args.no_router else RouterLink(store, interval=max(args.router_interval, 30))
 
     url = f"http://{local}:{port}"
-    print(f"\n  AetherNode {__version__}  ->  {url}\n  database: {args.db}\n")
-    if FROZEN:
-        print("  Keep this window open while you use AetherNode. Close it to stop.\n")
+    app = create_app(store, scanner, router)
+    logging.info("AetherNode %s at %s (database %s)", __version__, url, args.db)
+
+    if not args.tray:
+        print(f"\n  AetherNode {__version__}  ->  {url}\n  database: {args.db}\n")
+        if args.open:
+            webbrowser.open(url)
+        uvicorn.run(app, host=args.host, port=port, log_level="warning")
+        return
+
+    # Tray mode: web server in a background thread, tray icon on the main thread.
+    import threading
+
+    from .tray import Tray
+    server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=port, log_level="warning", log_config=None))
+    web = threading.Thread(target=server.run, name="web", daemon=True)
+    web.start()
+    for _ in range(100):  # wait up to ~10 s for the dashboard to come up
+        if server.started or not web.is_alive():
+            break
+        threading.Event().wait(0.1)
+    if not server.started:
+        raise RuntimeError(f"the dashboard server didn't start on port {port}")
     if args.open:
         webbrowser.open(url)
-    uvicorn.run(create_app(store, scanner, router), host=args.host, port=port, log_level="warning")
+
+    def quit_app():
+        logging.info("Quit from tray")
+        if scanner:
+            scanner.stop()
+        server.should_exit = True
+
+    Tray(url, store, data_dir, quit_app, scanner=scanner).run()
+    web.join(timeout=5)
 
 
 if __name__ == "__main__":

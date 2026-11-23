@@ -7,10 +7,12 @@ One Python process does everything (scanning, storage and the web dashboard), wi
 ## Download (Windows)
 
 1. Download **`AetherNode.exe`** from the [latest release](https://github.com/harshasingh159-source/aethernode-sentinel/releases/latest).
-2. Double-click it. A small console window opens and the dashboard opens in your browser. **Keep that window open** while you use AetherNode; close it to stop.
+2. Double-click it. The dashboard opens in your browser, and AetherNode keeps running in the background with an icon in the system tray, by the clock (look under the **^** arrow if you don't see it).
 3. Windows may show *"Windows protected your PC"*, because the app isn't code-signed. Click **More info → Run anyway**. Only do this for a file downloaded from the release page above (you can check it against the SHA-256 listed there).
 
-Your data stays on your PC, in `%LOCALAPPDATA%\AetherNode\aethernode.db`. No account, no cloud. Optional: install [Npcap](https://npcap.com) for instant new-device alerts. Without it, devices still show up within a minute.
+**Tray icon:** click it to open the dashboard. Right-click it for *Open dashboard*, *Open data folder* and *Quit AetherNode*. It turns amber while an untrusted device is online, and Windows notifies you when a new device joins your network.
+
+Your data stays on your PC, in `%LOCALAPPDATA%\AetherNode\` (`aethernode.db`, plus `aethernode.log` for troubleshooting). No account, no cloud. Optional: install [Npcap](https://npcap.com) for instant new-device alerts. Without it, devices still show up within a minute.
 
 Running it again while it's open just brings the dashboard back up.
 

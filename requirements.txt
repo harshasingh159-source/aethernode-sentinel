@@ -5,3 +5,5 @@ requests>=2.31
 cryptography>=42
 # optional: device vendor names + instant (live) detection
 scapy>=2.5
+# Windows app: system-tray icon
+pystray>=0.19 ; sys_platform == "win32"
