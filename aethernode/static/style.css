@@ -155,3 +155,21 @@ input:focus { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transpare
 .router-form .btn { justify-self: start; }
 .badge.ok { border-color: var(--accent); color: var(--accent); }
 .badge.warn { border-color: var(--warn); color: var(--warn); }
+.router-cleanup { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+.router-cleanup .check { display: flex; align-items: center; gap: 8px; }
+.router-cleanup .btn { margin-left: auto; }
+.router-note { margin: 10px 14px; font-size: 13.5px; color: var(--muted); }
+.pick { width: 16px; height: 16px; margin: 0; accent-color: var(--danger); }
+.device.router-row { grid-template-columns: 16px 12px minmax(0, 1fr) auto; }
+
+/* in-page confirmation (browser confirm() popups can be blocked) */
+.confirm {
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 0;
+  background: var(--panel); color: var(--text); width: min(460px, calc(100vw - 32px));
+}
+.confirm::backdrop { background: rgb(0 0 0 / .55); }
+.confirm form { display: grid; gap: 12px; padding: 18px; }
+.confirm h3 { margin: 0; font-size: 16px; }
+.confirm-body { color: var(--muted); font-size: 14px; white-space: pre-line; max-height: 50vh; overflow-y: auto; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.btn.danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; }

@@ -32,6 +32,15 @@ The **Router** tab signs in to your router's admin page and shows its list of co
 - Tick **Remember** to keep the login across restarts. It is stored unencrypted in `aethernode.db`, so leave it unticked on a shared PC.
 - AetherNode signs in, reads the list and signs out again every 2 minutes (`--router-interval`), so it never blocks you from using the router's own admin page. If the router rejects the password, polling stops so it can't trigger the router's lockout.
 
+### Cleaning up the router's device list
+
+Routers remember every device that ever joined. In the Router tab, tick devices that are **not connected** (or *Select all not connected*) and press **Remove from router**.
+
+- Connected devices can't be selected, and are re-checked right before each delete.
+- Devices are removed **one at a time**: the app re-reads the list, deletes one, and checks that exactly that device disappeared. If anything else vanishes it stops. (Some firmware only honours the first ID of a batch delete and renumbers IDs afterwards.)
+- A removed device isn't blocked. If it connects again it simply reappears as new, without any name given on the router.
+- The router doesn't record when a device last connected, so there's no automatic "older than a month" option.
+
 ## How detection works
 
 | Engine | Needs | What it does |
@@ -68,6 +77,7 @@ Use `--host 0.0.0.0` to view the dashboard from your phone on the same network. 
 | PUT | `/api/router` | `{"url", "username", "password", "remember"}`: connect |
 | DELETE | `/api/router` | disconnect and forget the login |
 | POST | `/api/router/refresh` | re-read the router now |
+| POST | `/api/router/remove` | `{"macs": [...]}`: make the router forget offline devices |
 
 ## Project layout
 

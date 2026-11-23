@@ -156,6 +156,17 @@ def layout_summary(data, devices):
             "with_ip": sum(1 for d in devices if d.get("ip"))}
 
 
+def _dicts(node):
+    """Every dict anywhere inside a JSON value."""
+    if isinstance(node, dict):
+        yield node
+        for v in node.values():
+            yield from _dicts(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _dicts(v)
+
+
 def _real_name(name):
     """Routers fill nameless hosts with placeholders like 'Unknown_0a:11:22:33:44:05' or '*'."""
     return bool(name) and str(name).strip() not in ("*", "") and not str(name).strip().lower().startswith("unknown")
@@ -241,7 +252,8 @@ def parse_devices(data):
 class NokiaRouter:
     kind = "Nokia"
     # (label, CGI) pairs read after the dashboard: "connected devices" and the LAN host table
-    EXTRA_SOURCES = (("clients", "device_home_nw_client_status_web_app.cgi"),
+    EXTRA_SOURCES = (("home", "lan_status_web_app.cgi?wlan"),  # the router's own Devices page
+                     ("clients", "device_home_nw_client_status_web_app.cgi"),
                      ("lan", "lan_status_web_app.cgi?lan"))
 
     def __init__(self, url, username, password, timeout=15):
@@ -262,17 +274,35 @@ class NokiaRouter:
                           "(KHTML, like Gecko) Chrome/130.0 Safari/537.36",
         })
         self.last = {}  # status/content-type/location of the last response, for error messages
+        # One router session at a time: the background poll and a removal must not interleave
+        # (they share this session, and every operation ends with a logout).
+        import threading
+        self.op_lock = threading.RLock()
+        self._last_request_at = 0.0
+
+    PACE = 0.25  # seconds between requests: the router's tiny web server drops bursts
+    RETRY_DELAYS = (0.8, 2.0, 4.0)
 
     # overridable in tests
     def _request(self, method, path, data=None):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")  # InsecureRequestWarning for the self-signed cert
-            try:
-                # a redirect means "not logged in": report it instead of following it to the login page
-                r = self.session.request(method, f"{self.url}/{path}", data=data,
-                                         timeout=self.timeout, allow_redirects=False)
-            except requests.RequestException as e:
-                raise RouterError(f"Can't reach the router at {self.url} ({e.__class__.__name__})") from e
+        import time
+        # Reads (and the login nonce) are safe to repeat; anything that changes the router is not.
+        safe = method == "GET" or path.endswith("?nonce")
+        attempts = (0.0,) + (self.RETRY_DELAYS if safe else ())
+        for n, delay in enumerate(attempts):
+            time.sleep(max(delay, self._last_request_at + self.PACE - time.monotonic(), 0))
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")  # InsecureRequestWarning for the self-signed cert
+                try:
+                    # a redirect means "not logged in": report it instead of following it to the login page
+                    r = self.session.request(method, f"{self.url}/{path}", data=data,
+                                             timeout=self.timeout, allow_redirects=False)
+                    break
+                except requests.RequestException as e:
+                    if n == len(attempts) - 1:
+                        raise RouterError(f"Can't reach the router at {self.url} ({e.__class__.__name__})") from e
+                finally:
+                    self._last_request_at = time.monotonic()
         preview = re.sub(r"\s+", " ", r.content[:120].decode("utf-8", errors="replace"))
         self.last = {"status": r.status_code, "type": r.headers.get("Content-Type", ""),
                      "location": r.headers.get("Location"), "size": len(r.content), "preview": preview}
@@ -289,6 +319,7 @@ class NokiaRouter:
                 f"&enckey={_esc(base64.b64encode(os.urandom(16)).decode())}"
                 f"&enciv={_esc(base64.b64encode(os.urandom(16)).decode())}"
                 f"&nohash=1&hPassword=undefined")
+        self._pubkey = info["pubkey"]
         res = self._request("POST", "login_web_app.cgi", encrypt_form(form, info["pubkey"]))
         if not isinstance(res, dict):
             raise RouterError("Router gave an unexpected login response.")
@@ -296,11 +327,112 @@ class NokiaRouter:
             raise AuthError("Router has temporarily locked logins after failed attempts. Wait a few minutes.")
         if res.get("result") != 0 or not res.get("sid"):
             raise AuthError(res.get("error_msg") or "Login failed: check the username and password.")
+        self._token = res.get("token", "")
         if "sid" not in self.session.cookies:
             # The session lives in a "sid" cookie; set it ourselves if the router only put it in the JSON.
             host = re.sub(r"^https?://", "", self.url).split("/")[0].split(":")[0]
             self.session.cookies.set("sid", str(res["sid"]), domain=host, path="/")
         return res
+
+    def _post_csrf(self, path, form):
+        """POST like the router page's postWithCSRFToken: add the session token, then encrypt."""
+        return self._request("POST", path, encrypt_form(f"{form}&csrf_token={self._token}", self._pubkey))
+
+    def _read_all(self):
+        """Dashboard + extra device tables, merged (assumes we're logged in)."""
+        data = self._request("GET", "dashboard_device_status_web_app.cgi")
+        if data is None:
+            return None
+        merged = {"dashboard": data}
+        for key, path in self.EXTRA_SOURCES:
+            try:
+                extra = self._request("GET", path)
+            except RouterError:
+                extra = None
+            merged[key] = extra if extra is not None else {"_unavailable": self.last.get("status")}
+        return merged
+
+    def remove(self, macs):
+        """Make the router forget these devices. Never removes one that is connected right now.
+
+        The router's Devices page deletes by the _oid of the device's alias_cfg entry,
+        looked up by MAC. Batch deletes ("oid=1,2,3") only remove the first entry on some
+        firmware, and IDs may be renumbered after a delete, so we go one device at a time:
+        re-read -> look up the *current* ID -> delete -> re-read and check that exactly that
+        device vanished. If anything else disappears we stop immediately.
+        Returns (removed_macs, {mac: reason_skipped}).
+        """
+        wanted = sorted({m.strip().lower().replace("-", ":") for m in macs})
+        removed, skipped = [], {}
+        with self.op_lock:
+            self.login()
+            try:
+                snap = None
+                for i, mac in enumerate(wanted):
+                    sent = False
+                    try:
+                        snap = snap or self._fresh_snapshot()
+                        hosts, active, oids = snap
+                        if mac in active:
+                            skipped[mac] = "connected right now"
+                            continue
+                        if mac not in oids:
+                            skipped[mac] = "not in the router's list"
+                            continue
+                        sent = True
+                        try:
+                            self._post_csrf("lan_status_web_app.cgi?del", f"oid={oids[mac]}")
+                        except RouterError:
+                            pass  # never re-send a delete blindly; the re-read below shows what happened
+                        snap = self._fresh_snapshot()
+                    except RouterError as e:
+                        if sent:
+                            skipped[mac] = "may have been removed (lost the connection right after; press Refresh)"
+                        for rest in wanted[i:]:
+                            skipped.setdefault(rest, f"not attempted: {e}")
+                        break
+                    gone = hosts - snap[0]
+                    if gone - {mac}:
+                        if mac in gone:
+                            removed.append(mac)
+                        raise RouterError(
+                            "Stopped: the router also removed devices that weren't selected: "
+                            + ", ".join(sorted(gone - {mac})) + ". Nothing more was deleted. "
+                            + (f"Removed before stopping: {', '.join(removed)}." if removed else ""))
+                    if mac in gone:
+                        removed.append(mac)
+                    else:
+                        skipped[mac] = "router didn't remove it"
+                return removed, skipped
+            finally:
+                self.logout()
+
+    def _fresh_snapshot(self):
+        snap = self._snapshot()
+        if snap is None:  # session dropped: sign in again once
+            self.login()
+            snap = self._snapshot()
+        if snap is None:
+            last = self.last
+            raise RouterError(f"couldn't read the router's device list (HTTP {last.get('status')}"
+                              + (f", redirected to {last['location']}" if last.get("location") else "") + ")")
+        return snap
+
+    def _snapshot(self):
+        """(all host MACs, connected MACs, {mac: alias _oid}) from a light read, or None."""
+        data = self._request("GET", "dashboard_device_status_web_app.cgi")
+        if data is None:
+            return None
+        home = self._request("GET", "lan_status_web_app.cgi?wlan")
+        merged = {"dashboard": data, "home": home or {}}
+        active = {d["mac"] for d in parse_devices(merged) if d["active"]}
+        oids = {}
+        for node in _dicts(data):
+            m = str(node.get("MACAddress") or "").strip().lower().replace("-", ":")
+            if m and "_oid" in node and "HostName" in node and "Active" not in node:
+                oids.setdefault(m, node["_oid"])  # alias_cfg-style entry
+        # "hosts" = the router's deletable device table itself, so any unexpected removal shows
+        return set(oids), active, oids
 
     def logout(self):
         try:
@@ -309,6 +441,10 @@ class NokiaRouter:
             pass
 
     def devices(self):
+        with self.op_lock:  # waits if a removal is using the router session
+            return self._devices()
+
+    def _devices(self):
         self.login()
         try:
             data = self._request("GET", "dashboard_device_status_web_app.cgi")
@@ -390,6 +526,21 @@ class RouterLink:
 
     def refresh(self):
         self._wake.set()
+
+    def remove(self, macs):
+        """Ask the router to forget devices, then refresh our copy of its list."""
+        with self._lock:
+            client = self._client
+        if client is None:
+            raise RouterError("Router isn't connected.")
+        try:
+            removed, skipped = client.remove(macs)
+        finally:
+            self._wake.set()  # re-read the list in the background, even after an error
+        with self._lock:
+            gone = set(removed)
+            self.state["devices"] = [d for d in self.state["devices"] if d["mac"] not in gone]
+        return {"removed": removed, "skipped": skipped}
 
     def _apply(self, devices, layout=None):
         import time

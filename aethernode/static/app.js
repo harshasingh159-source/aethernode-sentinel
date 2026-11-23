@@ -4,7 +4,7 @@ const POLL_MS = 4000;
 const $ = (sel) => document.querySelector(sel);
 
 const state = {
-  devices: [], events: [], status: null, router: null,
+  devices: [], events: [], status: null, router: null, routerPick: new Set(),
   view: "review", query: "", editing: null,
   lastEventId: null, fresh: new Set(),
 };
@@ -78,6 +78,20 @@ function banner(msg) {
   const b = $("#banner");
   b.textContent = msg;
   b.hidden = !msg;
+}
+
+// In-page confirmation: browser confirm() popups can be blocked or auto-cancelled.
+function askConfirm(title, body, okLabel = "OK") {
+  const dlg = $("#confirm-dialog");
+  $("#confirm-title").textContent = title;
+  $("#confirm-body").textContent = body;
+  $("#confirm-ok").textContent = okLabel;
+  return new Promise((resolve) => {
+    dlg.onclose = () => resolve(dlg.returnValue === "ok");
+    dlg.returnValue = "";
+    dlg.showModal();
+    dlg.querySelector("button[value=cancel]").focus();  // safe default
+  });
 }
 
 function notify(title, body) {
@@ -167,7 +181,13 @@ function renderRouter() {
     if (d.connection) badges.push(el("span", { className: "badge", textContent: d.connection }));
     const meta = [d.ip || "no IP", el("span", { className: "mono", textContent: d.mac })];
     if (d.label && d.label !== d.name) meta.push(`you call it "${d.label}"`);
-    return el("li", { className: `device${d.known && !d.trusted ? " untrusted" : ""}` },
+    const pick = d.active ? el("span") : el("input", {
+      type: "checkbox", className: "pick", checked: state.routerPick.has(d.mac),
+      title: "Select to remove from the router",
+      onchange: (e) => { e.target.checked ? state.routerPick.add(d.mac) : state.routerPick.delete(d.mac); renderRouter(); },
+    });
+    return el("li", { className: `device router-row${d.known && !d.trusted ? " untrusted" : ""}` },
+      pick,
       el("span", { className: `dot${d.active ? " on" : ""}`, title: d.active ? "Connected" : "Not connected" }),
       el("div", { className: "info" },
         el("div", { className: "title" },
@@ -176,6 +196,15 @@ function renderRouter() {
         el("div", { className: "meta" }, ...meta.flatMap((m, i) => (i ? [" · ", m] : [m])))),
       el("div", { className: "seen", textContent: d.active ? "connected" : "not connected" }));
   });
+  // drop selections for devices that vanished or reconnected
+  const removable = new Set(r.devices.filter((d) => !d.active).map((d) => d.mac));
+  for (const mac of [...state.routerPick]) if (!removable.has(mac)) state.routerPick.delete(mac);
+  const n = state.routerPick.size;
+  $("#router-selected").textContent = n ? `${n} selected` : `${removable.size} not connected`;
+  $("#router-remove").disabled = n === 0;
+  $("#router-remove").textContent = n ? `Remove ${n} from router` : "Remove from router";
+  $("#router-select-all").checked = removable.size > 0 && n === removable.size;
+
   $("#router-devices").replaceChildren(...(list.length ? list
     : [el("li", { className: "empty", textContent: r.last_poll ? "The router reported no devices." : "Reading the router's device list…" })]));
   $("#router-summary").textContent += ` · ${active} connected / ${r.devices.length} known`;
@@ -229,8 +258,8 @@ function deviceRow(d) {
   trust.onclick = () => act(() => api(`/devices/${encodeURIComponent(d.mac)}`, { method: "PATCH", body: { trusted: !d.trusted } }));
 
   li.querySelector(".rename").onclick = () => startRename(li, d);
-  li.querySelector(".forget").onclick = () => {
-    if (confirm(`Forget ${label(d)}?\nIt will reappear as a new device if it's seen again.`)) {
+  li.querySelector(".forget").onclick = async () => {
+    if (await askConfirm(`Forget ${label(d)}?`, "It will reappear as a new device if it's seen again.", "Forget")) {
       act(() => api(`/devices/${encodeURIComponent(d.mac)}`, { method: "DELETE" }));
     }
   };
@@ -318,9 +347,38 @@ routerForm.onsubmit = async (e) => {
   }
   await refresh();
 };
+$("#router-select-all").onchange = (e) => {
+  state.routerPick = new Set(e.target.checked ? state.router.devices.filter((d) => !d.active).map((d) => d.mac) : []);
+  renderRouter();
+};
+$("#router-remove").onclick = async () => {
+  const picked = state.router.devices.filter((d) => state.routerPick.has(d.mac));
+  if (!picked.length) return;
+  const names = picked.slice(0, 15).map((d) => `• ${d.name || d.mac}`).join("\n") +
+    (picked.length > 15 ? `\n…and ${picked.length - 15} more` : "");
+  const ok = await askConfirm(`Remove ${picked.length} device(s) from the router's list?`,
+    `${names}\n\nThis can't be undone. A removed device can still reconnect; it just shows up as new ` +
+    "(and loses any name given on the router).", `Remove ${picked.length}`);
+  if (!ok) return;
+  const btn = $("#router-remove"), note = $("#router-remove-result");
+  btn.disabled = true; btn.textContent = "Removing…"; note.hidden = true;
+  try {
+    const res = await api("/router/remove", { method: "POST", body: { macs: picked.map((d) => d.mac) } });
+    const skipped = Object.entries(res.skipped);
+    note.textContent = `Removed ${res.removed.length} device(s) from the router.` +
+      (skipped.length ? ` Skipped ${skipped.length}: ` + skipped.map(([m, why]) => `${(picked.find((d) => d.mac === m) || {}).name || m} (${why})`).join(", ") : "");
+    state.routerPick.clear();
+  } catch (err) {
+    note.textContent = `Remove failed: ${err.message}`;
+  }
+  note.hidden = false;
+  await refresh();
+};
 $("#router-refresh").onclick = () => act(() => api("/router/refresh", { method: "POST" }));
-$("#router-disconnect").onclick = () => {
-  if (confirm("Disconnect the router? AetherNode will forget its login.")) act(() => api("/router", { method: "DELETE" }));
+$("#router-disconnect").onclick = async () => {
+  if (await askConfirm("Disconnect the router?", "AetherNode will forget its login.", "Disconnect")) {
+    act(() => api("/router", { method: "DELETE" }));
+  }
 };
 
 refresh();

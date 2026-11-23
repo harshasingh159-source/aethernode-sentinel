@@ -39,6 +39,8 @@ def decrypt_login(body):
 
 
 class FakeNokia(rt.NokiaRouter):
+    PACE = 0
+    RETRY_DELAYS = ()
     def __init__(self, *a, accept_password="s3cret&!", **kw):
         super().__init__(*a, **kw)
         self.accept, self.calls, self.logged_in = accept_password, [], False
@@ -168,3 +170,144 @@ class PlaceholderNameTests(unittest.TestCase):
     def test_unknown_placeholder_is_not_a_name(self):
         data = {"alias_cfg": [{"HostName": "Unknown_0a:11:22:33:44:05", "MACAddress": "0a:11:22:33:44:05"}]}
         self.assertIsNone(rt.parse_devices(data)[0].get("name"))
+
+
+class FakeRemovable(FakeNokia):
+    """A router with live status by MAC and a deletable alias list."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.alias = [
+            {"_oid": 7, "HostName": "old-tablet", "HostAlias": "", "MACAddress": "aa:bb:cc:00:00:09"},
+            {"_oid": 8, "HostName": "Galaxy-S23", "HostAlias": "", "MACAddress": "0e:11:22:33:44:01"},
+        ]
+        self.deleted = []
+
+    def _request(self, method, path, data=None):
+        if path == "dashboard_device_status_web_app.cgi":
+            return {"alias_cfg": list(self.alias)} if self.logged_in else None
+        if path == "lan_status_web_app.cgi?wlan":
+            return {"device_cfg": [{"_oid": 1, "HostName": "Galaxy-S23", "MACAddress": "0E:11:22:33:44:01", "Active": 1}]}
+        if path in ("device_home_nw_client_status_web_app.cgi", "lan_status_web_app.cgi?lan"):
+            return None
+        if path == "lan_status_web_app.cgi?del":
+            form = {k: v[0] for k, v in parse_qs(decrypt_login(data).decode()).items()}
+            assert form["csrf_token"] == "tok", form
+            oids = {int(o) for o in form["oid"].split(",")}
+            self.deleted += sorted(oids)
+            self.alias = [a for a in self.alias if a["_oid"] not in oids]
+            return {"result": 0}
+        return super()._request(method, path, data)
+
+
+class RemoveTests(unittest.TestCase):
+    def test_removes_offline_and_protects_connected(self):
+        r = FakeRemovable("192.168.1.254", "admin", "s3cret&!")
+        removed, skipped = r.remove(["AA-BB-CC-00-00-09", "0e:11:22:33:44:01", "11:22:33:44:55:66"])
+        self.assertEqual(removed, ["aa:bb:cc:00:00:09"])
+        self.assertEqual(r.deleted, [7])  # only the offline device's alias _oid was sent
+        self.assertEqual(skipped["0e:11:22:33:44:01"], "connected right now")
+        self.assertEqual(skipped["11:22:33:44:55:66"], "not in the router's list")
+        self.assertEqual(r.calls[-1], "login_web_app.cgi?out")
+
+    def test_reports_when_router_ignores_delete(self):
+        class Stubborn(FakeRemovable):
+            def _request(self, method, path, data=None):
+                if path == "lan_status_web_app.cgi?del":
+                    return {"result": 0}  # claims success, deletes nothing
+                return super()._request(method, path, data)
+        removed, skipped = Stubborn("192.168.1.254", "admin", "s3cret&!").remove(["aa:bb:cc:00:00:09"])
+        self.assertEqual(removed, [])
+        self.assertEqual(skipped["aa:bb:cc:00:00:09"], "router didn't remove it")
+
+
+class FakeRenumbering(FakeRemovable):
+    """Worst case seen in the wild: batch deletes only remove the first ID, and IDs are
+    list positions that shift after every delete."""
+
+    def __init__(self, *a, collateral=False, **kw):
+        super().__init__(*a, **kw)
+        self.alias = [{"HostName": f"dev{i}", "HostAlias": "", "MACAddress": f"aa:bb:cc:00:00:{i:02x}"}
+                      for i in range(1, 7)]
+        self.collateral = collateral
+
+    def _request(self, method, path, data=None):
+        if path == "dashboard_device_status_web_app.cgi":
+            if not self.logged_in:
+                return None
+            return {"alias_cfg": [dict(a, _oid=i + 1) for i, a in enumerate(self.alias)]}
+        if path == "lan_status_web_app.cgi?wlan":
+            return {"device_cfg": [{"HostName": "dev6", "MACAddress": "aa:bb:cc:00:00:06", "Active": 1}]}
+        if path == "lan_status_web_app.cgi?del":
+            form = {k: v[0] for k, v in parse_qs(decrypt_login(data).decode()).items()}
+            first = int(form["oid"].split(",")[0])  # firmware only honours the first ID
+            del self.alias[first - 1]
+            if self.collateral and self.alias:
+                del self.alias[-1]  # misbehaving router also drops another entry
+            return {"result": 0}
+        return super()._request(method, path, data)
+
+
+class OneByOneRemoveTests(unittest.TestCase):
+    def test_removes_all_selected_despite_renumbering(self):
+        r = FakeRenumbering("192.168.1.254", "admin", "s3cret&!")
+        pick = ["aa:bb:cc:00:00:02", "aa:bb:cc:00:00:03", "aa:bb:cc:00:00:05", "aa:bb:cc:00:00:06"]
+        removed, skipped = r.remove(pick)
+        self.assertEqual(removed, pick[:3])
+        self.assertEqual(skipped, {"aa:bb:cc:00:00:06": "connected right now"})
+        left = {a["MACAddress"] for a in r.alias}
+        self.assertEqual(left, {"aa:bb:cc:00:00:01", "aa:bb:cc:00:00:04", "aa:bb:cc:00:00:06"})
+
+    def test_stops_if_router_removes_something_else(self):
+        r = FakeRenumbering("192.168.1.254", "admin", "s3cret&!", collateral=True)
+        with self.assertRaisesRegex(rt.RouterError, "weren't selected"):
+            r.remove(["aa:bb:cc:00:00:01", "aa:bb:cc:00:00:02"])
+        self.assertEqual(len(r.alias), 4)  # stopped after the first delete
+        self.assertEqual(r.calls[-1], "login_web_app.cgi?out")
+
+
+class FlakyRouter(FakeRenumbering):
+    """Drops the connection on the 3rd delete (after actually deleting) and on some reads."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.deletes = 0
+
+    def _request(self, method, path, data=None):
+        if path == "lan_status_web_app.cgi?del":
+            self.deletes += 1
+            super()._request(method, path, data)
+            if self.deletes == 2:
+                raise rt.RouterError("Can't reach the router (ConnectionError)")  # reply lost
+            return {"result": 0}
+        return super()._request(method, path, data)
+
+
+class RobustnessTests(unittest.TestCase):
+    def test_lost_delete_reply_is_verified_not_resent(self):
+        r = FlakyRouter("192.168.1.254", "admin", "s3cret&!")
+        pick = ["aa:bb:cc:00:00:01", "aa:bb:cc:00:00:02", "aa:bb:cc:00:00:03"]
+        removed, skipped = r.remove(pick)
+        self.assertEqual(removed, pick)
+        self.assertEqual(skipped, {})
+        self.assertEqual(r.deletes, 3)  # the lost-reply delete was not sent twice
+
+    def test_unreachable_router_reports_partial_progress(self):
+        class DiesAfterOne(FakeRenumbering):
+            def __init__(s, *a, **kw):
+                super().__init__(*a, **kw)
+                s.dead = False
+
+            def _request(s, method, path, data=None):
+                if s.dead and path != "login_web_app.cgi?out":
+                    raise rt.RouterError("Can't reach the router (ConnectionError)")
+                out = super()._request(method, path, data)
+                if path == "lan_status_web_app.cgi?del":
+                    s.dead = True
+                return out
+
+        r = DiesAfterOne("192.168.1.254", "admin", "s3cret&!")
+        removed, skipped = r.remove(["aa:bb:cc:00:00:01", "aa:bb:cc:00:00:02"])
+        self.assertEqual(removed, [])  # couldn't verify the first, so it isn't claimed
+        self.assertTrue(skipped["aa:bb:cc:00:00:01"].startswith("may have been removed"))
+        self.assertTrue(skipped["aa:bb:cc:00:00:02"].startswith("not attempted"))

@@ -55,6 +55,12 @@
             </div>
           </div>
           <p id="router-error" class="router-error" hidden></p>
+          <div class="router-cleanup">
+            <label class="check"><input id="router-select-all" type="checkbox"> Select all not connected</label>
+            <span id="router-selected" class="sub"></span>
+            <button id="router-remove" class="btn small ghost danger" disabled>Remove from router</button>
+          </div>
+          <p id="router-remove-result" class="router-note" hidden></p>
           <ul id="router-devices" class="devices"></ul>
         </div>
 
@@ -76,6 +82,17 @@
       <ol id="events" class="events"></ol>
     </aside>
   </main>
+
+  <dialog id="confirm-dialog" class="confirm">
+    <form method="dialog">
+      <h3 id="confirm-title"></h3>
+      <div id="confirm-body" class="confirm-body"></div>
+      <div class="confirm-actions">
+        <button value="cancel" class="btn ghost">Cancel</button>
+        <button value="ok" id="confirm-ok" class="btn danger-solid">OK</button>
+      </div>
+    </form>
+  </dialog>
 
   <template id="device-tpl">
     <li class="device">

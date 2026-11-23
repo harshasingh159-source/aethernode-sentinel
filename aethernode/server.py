@@ -17,6 +17,10 @@ class DevicePatch(BaseModel):
     trusted: Optional[bool] = None
 
 
+class RouterRemove(BaseModel):
+    macs: list[str] = Field(min_length=1, max_length=200)
+
+
 class RouterLogin(BaseModel):
     url: str = Field(min_length=1, max_length=200)
     username: str = Field(min_length=1, max_length=64)
@@ -26,6 +30,13 @@ class RouterLogin(BaseModel):
 
 def create_app(store, scanner=None, router=None):
     app = FastAPI(title="AetherNode", version=__version__)
+
+    @app.middleware("http")
+    async def no_stale_ui(request, call_next):
+        # Make browsers re-check the dashboard files so updates show up without a hard refresh.
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
     def norm(mac):
         return mac.strip().lower().replace("-", ":")
@@ -84,6 +95,13 @@ def create_app(store, scanner=None, router=None):
     def router_disconnect():
         need_router().disconnect()
         return {"ok": True}
+
+    @app.post("/api/router/remove")
+    def router_remove(body: RouterRemove):
+        try:
+            return need_router().remove(body.macs)
+        except RouterError as e:
+            raise HTTPException(400, str(e))
 
     @app.post("/api/router/refresh")
     def router_refresh():
