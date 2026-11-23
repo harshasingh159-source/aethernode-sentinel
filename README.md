@@ -25,6 +25,8 @@ python -m aethernode --open
 
 Build the .exe yourself (Windows): `powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1`, output in `dist\AetherNode.exe`.
 
+Official releases are built by GitHub Actions straight from this repository (`.github/workflows/release.yml`): pushing a `v*` tag runs the tests, builds the .exe, signs it once code signing is set up, and publishes the release with its SHA-256. Every push to `main` also runs the tests on Windows and Linux.
+
 The dashboard opens at <http://127.0.0.1:8000>. Within ~10 seconds the first scan fills it with every device on your network.
 
 ## Using it
