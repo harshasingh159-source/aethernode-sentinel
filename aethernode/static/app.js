@@ -5,7 +5,9 @@ const $ = (sel) => document.querySelector(sel);
 
 const state = {
   devices: [], events: [], status: null, router: null, routerPick: new Set(),
-  view: "review", query: "", editing: null,
+  // open on the tab named in the address, e.g. http://127.0.0.1:8000/#all
+  view: ["review", "online", "all", "router"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "review",
+  query: "", editing: null,
   lastEventId: null, fresh: new Set(),
 };
 
@@ -307,7 +309,8 @@ function renderEvents() {
     const who = ev.label || ev.mac;
     const text = ev.kind === "joined" ? [el("span", { className: "what", textContent: verb }), `: ${who}`]
       : [`${who} ${verb}`];
-    const extra = ev.detail && ev.kind !== "online" ? ` (${ev.detail})` : "";
+    // "renamed" detail is the new name, which is usually the label already: don't repeat it
+    const extra = ev.detail && ev.kind !== "online" && ev.detail !== who ? ` (${ev.detail})` : "";
     return el("li", { className: ev.kind },
       el("span", { className: "ico", textContent: ico }),
       el("div", {}, ...text, extra, el("div", { className: "when", textContent: ago(ev.ts), title: new Date(ev.ts * 1000).toLocaleString() })));
@@ -317,7 +320,11 @@ function renderEvents() {
 // ---------------------------------------------------------------- wiring
 
 for (const tab of document.querySelectorAll(".tab")) {
-  tab.onclick = () => { state.view = tab.dataset.view; state.editing = null; render(); };
+  tab.onclick = () => {
+    state.view = tab.dataset.view; state.editing = null;
+    history.replaceState(null, "", `#${state.view}`);
+    render();
+  };
 }
 $("#search").oninput = (e) => { state.query = e.target.value; renderDevices(); };
 $("#scan-btn").onclick = () => act(() => api("/scan", { method: "POST" }));

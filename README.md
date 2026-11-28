@@ -2,6 +2,11 @@
 
 **Know every device on your network.** AetherNode finds everything connected to your Wi-Fi/LAN on its own, tells you the moment something new shows up, and lets you mark the devices you recognise as trusted. Anything you haven't vouched for stays in **Need review**.
 
+**[⬇ Download for Windows](https://github.com/harshasingh159-source/aethernode-sentinel/releases/latest/download/AetherNode.exe)**: free, open source, no account, nothing leaves your PC.
+
+![AetherNode dashboard: devices on a home network, two new ones waiting for review, and an activity timeline](docs/screenshot.png)
+<sub>Screenshot made with demo data (`--demo`): the devices, names and addresses are fictional.</sub>
+
 One Python process does everything (scanning, storage and the web dashboard), with no Node/npm and no admin rights required.
 
 **What it is not:** AetherNode only lists which devices are on your own network. It does no port scanning, no vulnerability or exploit detection, and it never tries to log in to other devices. The one exception is your router's admin page, and only if you enter its password yourself.
@@ -30,6 +35,8 @@ Running it again while it's open just brings the dashboard back up.
 pip install -r requirements.txt
 python -m aethernode --open
 ```
+
+Try it with fake devices (no scanning, nothing from your network shown): `python packaging/make_demo_db.py demo.db` then `python -m aethernode --demo --db demo.db --open`.
 
 Build the .exe yourself (Windows): `powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1`, output in `dist\AetherNode.exe`.
 

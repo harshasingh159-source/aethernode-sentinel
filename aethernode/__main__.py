@@ -53,6 +53,9 @@ def main():
     p.add_argument("--subnet", help="CIDR to scan, e.g. 192.168.1.0/24 (default: your /24)")
     p.add_argument("--no-live", action="store_true", help="don't try live ARP sniffing")
     p.add_argument("--no-scan", action="store_true", help="dashboard only, don't scan")
+    p.add_argument("--demo", action="store_true",
+                   help="screenshot/demo mode: no scanning or router, but a realistic scanner status "
+                        "(pair with a database from packaging/make_demo_db.py)")
     p.add_argument("--no-router", action="store_true", help="disable the router device-list integration")
     p.add_argument("--router-interval", type=int, default=120, help="seconds between router polls (default 120)")
     p.add_argument("--open", action="store_true", default=FROZEN,
@@ -97,6 +100,30 @@ def main():
         raise
 
 
+class DemoScanner:
+    """Stands in for the scanner in --demo mode: never touches the network, but reports a
+    plausible status so screenshots look like a normal running app."""
+
+    def __init__(self, store):
+        self.store = store
+        self.started = __import__("time").time()
+
+    @property
+    def state(self):
+        import time
+        now = time.time()
+        since = (now - self.started) % 60
+        return {"subnet": "192.168.1.0/24", "self_ip": "192.168.1.10", "scanning": False,
+                "last_scan": now - since - 8, "last_scan_found": self.store.counts()["online"],
+                "next_scan": now + 60 - since, "live": "on", "error": None, "interval": 60}
+
+    def scan_now(self):
+        pass
+
+    def stop(self):
+        pass
+
+
 def show_error(text):
     if os.name == "nt":
         import ctypes
@@ -114,11 +141,13 @@ def run(args, port, local, data_dir):
 
     store = Store(args.db)
     scanner = None
-    if not args.no_scan:
+    if args.demo:
+        scanner = DemoScanner(store)
+    elif not args.no_scan:
         scanner = Scanner(store, interval=max(args.interval, 10), subnet=args.subnet, live=not args.no_live)
         scanner.start()
 
-    router = None if args.no_router else RouterLink(store, interval=max(args.router_interval, 30))
+    router = None if (args.no_router or args.demo) else RouterLink(store, interval=max(args.router_interval, 30))
 
     url = f"http://{local}:{port}"
     app = create_app(store, scanner, router)
