@@ -1,12 +1,12 @@
 # Code signing policy
 
-**Status:** AetherNode has applied for free code signing for open-source projects from
-[SignPath Foundation](https://signpath.org). Until that is approved, releases are **not code-signed**:
-check downloads against the SHA-256 published with each release.
+**Status:** releases are currently **not code-signed**. Check downloads against the SHA-256 published
+with each release. AetherNode applied for free open-source code signing from
+[SignPath Foundation](https://signpath.org) in November 2026. They asked the project to build a public
+track record first, and we plan to reapply once it has one.
 
-When signing is active, every signed release carries this attribution:
-
-> Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org)
+This policy describes how signing will work once it's in place. If signing comes from SignPath Foundation,
+every signed release will carry their attribution.
 
 ## What gets signed
 
@@ -41,6 +41,5 @@ network traffic it creates on your local network.
 
 ## Reporting problems
 
-If you believe a signed AetherNode release is malicious or was not built from this repository, open an
-issue at <https://github.com/harshasingh159-source/aethernode-sentinel/issues> or contact SignPath Foundation
-at support@signpath.io.
+If you believe an AetherNode release is malicious or was not built from this repository, open an issue at
+<https://github.com/harshasingh159-source/aethernode-sentinel/issues>.
